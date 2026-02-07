@@ -13,6 +13,18 @@ const md=(y,m)=>new Date(y,m+1,0).getDate();
 const id=()=>Math.random().toString(36).slice(2)+Date.now().toString(36);
 function useM(){const[m,s]=useState(window.innerWidth<768);useEffect(()=>{const h=()=>s(window.innerWidth<768);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h)},[]);return m}
 
+// Undo system
+function useUndo(){
+  const[toast,setToast]=useState(null);const timer=useRef(null);
+  const show=(label,undoFn)=>{if(timer.current)clearTimeout(timer.current);setToast({label,undoFn});timer.current=setTimeout(()=>setToast(null),4000)};
+  const doUndo=()=>{if(toast?.undoFn)toast.undoFn();setToast(null);if(timer.current)clearTimeout(timer.current)};
+  const dismiss=()=>{setToast(null);if(timer.current)clearTimeout(timer.current)};
+  return{toast,show,doUndo,dismiss};
+}
+
+// Overlap detection
+function getOverlaps(evs){const ol=new Set();for(let i=0;i<evs.length;i++){for(let j=i+1;j<evs.length;j++){const a=evs[i],b=evs[j];if(a.date===b.date){const as=a.startHour+(a.startMin||0)/60,ae=a.endHour+(a.endMin||0)/60,bs=b.startHour+(b.startMin||0)/60,be=b.endHour+(b.endMin||0)/60;if(as<be&&bs<ae){ol.add(a.id);ol.add(b.id)}}}}return ol}
+
 const I={
   Cal:()=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
   Chk:()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
@@ -34,6 +46,9 @@ const I={
   Star:()=><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>,
   Up:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="18 15 12 9 6 15"/></svg>,
   Down:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>,
+  Copy:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>,
+  Clr:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6"/></svg>,
+  Warn:()=><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L1 21h22L12 2zm0 4l7.5 13h-15L12 6z"/><rect x="11" y="10" width="2" height="5"/><rect x="11" y="16" width="2" height="2"/></svg>,
 };
 const nb={display:"flex",alignItems:"center",justifyContent:"center",padding:"4px 8px",background:"#1e1e1e",border:"1px solid #333",borderRadius:6,color:"#aaa",cursor:"pointer"};
 
@@ -68,11 +83,16 @@ function Main({user,signOut}){
   const{events,setEvents,habits,setHabits,habitLog,setHabitLog,completedBlocks:comp,setCompletedBlocks:setComp,tasks,setTasks,profile,setProfile,loaded}=useSyncedData(user);
   const[page,setPage]=useState("focus");
   const mob=useM();
+  const undo=useUndo();
+  const overlaps=useMemo(()=>getOverlaps(events),[events]);
 
   const addEv=ev=>setEvents(p=>[...p,{...ev,id:id()}]);
-  const delEv=i=>setEvents(p=>p.filter(e=>e.id!==i));
+  const delEv=i=>{const ev=events.find(e=>e.id===i);setEvents(p=>p.filter(e=>e.id!==i));if(ev)undo.show(`Deleted "${ev.title}"`,()=>setEvents(p=>[...p,ev]))};
   const updEv=(i,pa)=>setEvents(p=>p.map(e=>e.id===i?{...e,...pa}:e));
+  const dupEv=(ev)=>{const tmr=dk(ad(new Date(ev.date+"T12:00:00"),1));const ne={...ev,id:id(),date:tmr};setEvents(p=>[...p,ne]);undo.show(`Duplicated to ${tmr}`,()=>setEvents(p=>p.filter(e=>e.id!==ne.id)))};
   const addRec=(ev,w)=>{const ne=[],g=id();for(let i=0;i<w;i++){const d=new Date(ev.date+"T12:00:00");d.setDate(d.getDate()+i*7);ne.push({...ev,id:id(),date:dk(d),recurringGroup:g})}setEvents(p=>[...p,...ne])};
+  const clearWeek=(weekStart)=>{const ws=dk(weekStart);const we=dk(ad(weekStart,6));const removed=events.filter(e=>e.date>=ws&&e.date<=we);if(removed.length===0)return;setEvents(p=>p.filter(e=>e.date<ws||e.date>we));undo.show(`Cleared ${removed.length} blocks`,()=>setEvents(p=>[...p,...removed]))};
+  const clearPast=()=>{const t=dk(new Date());const removed=events.filter(e=>e.date<t);if(removed.length===0)return;setEvents(p=>p.filter(e=>e.date>=t));undo.show(`Cleared ${removed.length} past blocks`,()=>setEvents(p=>[...p,...removed]))};
   const addH=h=>setHabits(p=>[...p,{...h,id:id()}]);
   const delH=i=>{setHabits(p=>p.filter(h=>h.id!==i));setHabitLog(p=>{const n={...p};Object.keys(n).forEach(k=>{if(k.startsWith(i))delete n[k]});return n});setEvents(p=>p.map(e=>e.linkedHabitId===i?{...e,linkedHabitId:null}:e))};
 
@@ -88,12 +108,19 @@ function Main({user,signOut}){
   const togH=useCallback((hid,day)=>{const le=events.find(e=>e.linkedHabitId===hid&&e.date===day);tog(le?.id||null,hid,day)},[events,tog]);
   const isC=(eid,day)=>!!comp[`${eid}_${day}`];
 
-  if(!loaded)return(<div style={{minHeight:"100vh",background:"#0f0f0f",display:"flex",alignItems:"center",justifyContent:"center",color:"#888",fontFamily:"'DM Sans',sans-serif"}}>Loading...</div>);
+  if(!loaded)return(<div style={{minHeight:"100vh",background:"#0f0f0f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'DM Sans',sans-serif"}}>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet"/>
+    <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,color:"#d4a017",marginBottom:16}}>Chronos</div>
+    <div style={{width:200,display:"flex",flexDirection:"column",gap:8}}>
+      {[.9,.7,.5].map((o,i)=><div key={i} style={{height:12,background:"#1e1e1e",borderRadius:6,opacity:o,animation:"pulse 1.5s ease infinite"}}/>)}
+    </div>
+    <style>{`@keyframes pulse{0%,100%{opacity:.3}50%{opacity:.6}}`}</style>
+  </div>);
 
   return(
     <div style={{minHeight:"100vh",maxHeight:"100vh",background:"#0f0f0f",color:"#e8e4de",fontFamily:"'DM Sans','Segoe UI',sans-serif",display:"flex",flexDirection:mob?"column":"row",overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet"/>
-      <style>{`@keyframes fadeIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}*{box-sizing:border-box}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#0f0f0f}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}html,body,#root{height:100%;overflow:hidden;margin:0}`}</style>
+      <style>{`@keyframes fadeIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}@keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes pop{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}@keyframes fadeOut{to{opacity:0;transform:translateY(10px)}}*{box-sizing:border-box}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#0f0f0f}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}html,body,#root{height:100%;overflow:hidden;margin:0}`}</style>
 
       {/* Desktop Sidebar */}
       {!mob&&<div style={{width:220,height:"100vh",background:"#161616",borderRight:"1px solid #252525",padding:"20px 0",display:"flex",flexDirection:"column",flexShrink:0}}>
@@ -106,9 +133,16 @@ function Main({user,signOut}){
 
       <div style={{flex:1,overflow:"auto",height:mob?"calc(100vh - 64px)":"100vh",WebkitOverflowScrolling:"touch"}}>
         {page==="focus"&&<FocusPage tasks={tasks} setTasks={setTasks} profile={profile} setProfile={setProfile} mob={mob} signOut={mob?signOut:null}/>}
-        {page==="calendar"&&<CalPage ev={events} hab={habits} addEv={addEv} addRec={addRec} delEv={delEv} updEv={updEv} togB={togB} isC={isC} comp={comp} mob={mob}/>}
+        {page==="calendar"&&<CalPage ev={events} hab={habits} addEv={addEv} addRec={addRec} delEv={delEv} updEv={updEv} dupEv={dupEv} togB={togB} isC={isC} comp={comp} mob={mob} clearWeek={clearWeek} clearPast={clearPast} overlaps={overlaps}/>}
         {page==="habits"&&<HabPage hab={habits} hLog={habitLog} addH={addH} delH={delH} togH={togH} ev={events} mob={mob}/>}
       </div>
+
+      {/* Undo Toast */}
+      {undo.toast&&<div style={{position:"fixed",bottom:mob?80:24,left:"50%",transform:"translateX(-50%)",background:"#2a2a2a",border:"1px solid #444",borderRadius:12,padding:"10px 16px",display:"flex",alignItems:"center",gap:12,zIndex:2000,animation:"slideUp .2s ease",boxShadow:"0 8px 32px rgba(0,0,0,.5)"}}>
+        <span style={{fontSize:13,color:"#ccc"}}>{undo.toast.label}</span>
+        <button onClick={undo.doUndo} style={{padding:"4px 12px",background:"#d4a017",border:"none",borderRadius:6,color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Undo</button>
+        <button onClick={undo.dismiss} style={{background:"none",border:"none",color:"#666",cursor:"pointer",padding:2}}><I.X/></button>
+      </div>}
 
       {/* Mobile Bottom Tab */}
       {mob&&<div style={{display:"flex",background:"#161616",borderTop:"1px solid #252525",height:64,flexShrink:0,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
@@ -302,7 +336,10 @@ function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
 
       {/* Completed */}
       {doneTasks.length>0&&<div>
-        <p style={{fontSize:11,color:"#555",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Completed ({doneTasks.length})</p>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <p style={{fontSize:11,color:"#555",textTransform:"uppercase",letterSpacing:1,margin:0}}>Completed ({doneTasks.length})</p>
+          <button onClick={()=>{const ids=doneTasks.map(t=>t.id);setTasks(p=>p.filter(t=>!ids.includes(t.id)))}} style={{fontSize:10,color:"#555",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
+        </div>
         {doneTasks.map(t=>(
           <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:mob?"8px 12px":"10px 16px",marginBottom:4,borderRadius:8}}>
             <button onClick={()=>toggleTask(t.id)} style={{width:22,height:22,borderRadius:"50%",border:"none",background:"#4ade80",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#0f0f0f"}}><I.ChkS/></button>
@@ -353,13 +390,15 @@ function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
 // ═══════════════════════════════════════════
 // CALENDAR PAGE
 // ═══════════════════════════════════════════
-function CalPage({ev,hab,addEv,addRec,delEv,updEv,togB,isC,comp,mob}){
+function CalPage({ev,hab,addEv,addRec,delEv,updEv,dupEv,togB,isC,comp,mob,clearWeek,clearPast,overlaps}){
   const[cur,setCur]=useState(new Date());const[view,setView]=useState(mob?"day":"week");
   const[modal,setModal]=useState(false);const[edit,setEdit]=useState(null);const[pre,setPre]=useState(null);
+  const[menu,setMenu]=useState(false);
   const ws=sw(cur);const wd=Array.from({length:7},(_,i)=>ad(ws,i));
   const nav=dir=>{const d=new Date(cur);if(view==="week")d.setDate(d.getDate()+dir*7);else if(view==="day")d.setDate(d.getDate()+dir);else d.setMonth(d.getMonth()+dir);setCur(d)};
   const efd=day=>ev.filter(e=>e.date===dk(day));const today=new Date();
   const dayDays=view==="day"?[cur]:wd;
+  const weekBlockCount=wd.reduce((s,d)=>s+efd(d).length,0);
   return(
     <div style={{height:mob?"calc(100vh - 64px)":"100vh",display:"flex",flexDirection:"column"}}>
       <div style={{padding:mob?"10px 12px":"16px 28px",borderBottom:"1px solid #252525",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#141414",flexShrink:0,gap:8}}>
@@ -367,21 +406,27 @@ function CalPage({ev,hab,addEv,addRec,delEv,updEv,togB,isC,comp,mob}){
           <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:mob?16:24,fontWeight:600,margin:0,whiteSpace:"nowrap"}}>{MONTHS[cur.getMonth()].slice(0,mob?3:99)} {cur.getFullYear()}</h2>
           <div style={{display:"flex",gap:4}}><button onClick={()=>nav(-1)} style={nb}><I.CL/></button><button onClick={()=>setCur(new Date())} style={{...nb,fontSize:11,padding:"4px 8px"}}>Today</button><button onClick={()=>nav(1)} style={nb}><I.CR/></button></div>
         </div>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <div style={{display:"flex",gap:6,alignItems:"center",position:"relative"}}>
           <div style={{display:"flex",background:"#1e1e1e",borderRadius:8,overflow:"hidden"}}>{(mob?["day","week","month"]:["week","month"]).map(v=><button key={v} onClick={()=>setView(v)} style={{padding:mob?"6px 8px":"6px 16px",background:view===v?"#333":"transparent",border:"none",color:view===v?"#d4a017":"#777",cursor:"pointer",fontSize:mob?11:13,fontWeight:500,textTransform:"capitalize"}}>{v}</button>)}</div>
           <button onClick={()=>{setPre(null);setEdit(null);setModal(true)}} style={{display:"flex",alignItems:"center",gap:4,padding:mob?"7px 10px":"7px 16px",background:"linear-gradient(135deg,#d4a017,#b8860b)",border:"none",borderRadius:8,color:"#fff",cursor:"pointer",fontSize:mob?12:13,fontWeight:600}}><I.Plus/></button>
+          <button onClick={()=>setMenu(!menu)} style={{...nb,padding:"6px 8px"}}><I.Clr/></button>
+          {menu&&<div style={{position:"absolute",top:"100%",right:0,marginTop:8,background:"#1e1e1e",border:"1px solid #333",borderRadius:10,padding:6,zIndex:100,minWidth:180,animation:"fadeIn .15s ease"}}>
+            <button onClick={()=>{clearWeek(ws);setMenu(false)}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 12px",background:"none",border:"none",borderRadius:6,color:"#e8e4de",cursor:"pointer",fontSize:13,textAlign:"left"}} onMouseEnter={e=>e.currentTarget.style.background="#2a2a2a"} onMouseLeave={e=>e.currentTarget.style.background="none"}><I.Del/>Clear this week ({weekBlockCount})</button>
+            <button onClick={()=>{clearPast();setMenu(false)}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 12px",background:"none",border:"none",borderRadius:6,color:"#e8e4de",cursor:"pointer",fontSize:13,textAlign:"left"}} onMouseEnter={e=>e.currentTarget.style.background="#2a2a2a"} onMouseLeave={e=>e.currentTarget.style.background="none"}><I.Clr/>Clear all past blocks</button>
+          </div>}
         </div>
       </div>
-      {(view==="week"||view==="day")?<WkView wd={dayDays} efd={efd} today={today} onSlot={(d,h)=>{setPre({date:dk(d),startHour:h,endHour:Math.min(h+1,23)});setModal(true)}} onEv={e=>{setEdit(e);setModal(true)}} togB={togB} isC={isC} hab={hab} mob={mob}/>
+      {(view==="week"||view==="day")?<WkView wd={dayDays} efd={efd} today={today} onSlot={(d,h)=>{setPre({date:dk(d),startHour:h,endHour:Math.min(h+1,23)});setModal(true)}} onEv={e=>{setEdit(e);setModal(true)}} togB={togB} isC={isC} hab={hab} mob={mob} overlaps={overlaps}/>
       :<MoView cur={cur} ev={ev} today={today} onDay={d=>{setCur(d);setView(mob?"day":"week")}} comp={comp} mob={mob}/>}
-      {modal&&<EvModal pre={pre} edit={edit} hab={hab} mob={mob} onClose={()=>{setModal(false);setEdit(null);setPre(null)}} onSave={(e,w)=>{if(edit)updEv(edit.id,e);else if(w>1)addRec(e,w);else addEv(e);setModal(false);setEdit(null);setPre(null)}} onDel={edit?()=>{delEv(edit.id);setModal(false);setEdit(null)}:null}/>}
+      {modal&&<EvModal pre={pre} edit={edit} hab={hab} mob={mob} onClose={()=>{setModal(false);setEdit(null);setPre(null)}} onSave={(e,w)=>{if(edit)updEv(edit.id,e);else if(w>1)addRec(e,w);else addEv(e);setModal(false);setEdit(null);setPre(null)}} onDel={edit?()=>{delEv(edit.id);setModal(false);setEdit(null)}:null} onDup={edit?()=>{dupEv(edit);setModal(false);setEdit(null)}:null}/>}
+      {menu&&<div style={{position:"fixed",inset:0,zIndex:99}} onClick={()=>setMenu(false)}/>}
     </div>);
 }
 
 // ═══════════════════════════════════════════
 // WEEK VIEW
 // ═══════════════════════════════════════════
-function WkView({wd,efd,today,onSlot,onEv,togB,isC,hab,mob}){
+function WkView({wd,efd,today,onSlot,onEv,togB,isC,hab,mob,overlaps}){
   const ref=useRef(null);useEffect(()=>{if(ref.current)ref.current.scrollTop=7*60},[]);
   const RH=mob?52:64,LW=mob?40:64;
   return(<div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
@@ -389,10 +434,11 @@ function WkView({wd,efd,today,onSlot,onEv,togB,isC,hab,mob}){
       {wd.map((d,i)=>{const t=sm(d,today);return(<div key={i} style={{flex:1,padding:mob?"4px 0":"10px 0",textAlign:"center",borderLeft:"1px solid #1e1e1e"}}><div style={{fontSize:mob?9:11,color:"#666",textTransform:"uppercase"}}>{DAYS[d.getDay()]}</div><div style={{fontSize:mob?15:22,fontWeight:600,marginTop:1,color:t?"#0f0f0f":"#bbb",background:t?"#d4a017":"transparent",borderRadius:"50%",width:mob?26:36,height:mob?26:36,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{d.getDate()}</div></div>)})}</div>
     <div ref={ref} style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch"}}><div style={{position:"relative"}}>
       {HOURS.map(h=>(<div key={h} style={{display:"flex",height:RH,borderBottom:"1px solid #1a1a1a"}}><div style={{width:LW,flexShrink:0,textAlign:"right",paddingRight:mob?4:12,fontSize:mob?8:11,color:"#555"}}>{fmt(h)}</div>{wd.map((d,i)=><div key={i} onClick={()=>onSlot(d,h)} style={{flex:1,borderLeft:"1px solid #1a1a1a",cursor:"pointer",transition:"background .1s"}} onMouseEnter={e=>e.currentTarget.style.background="#1a1a1a"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}/>)}</div>))}
-      {wd.map((d,di)=>efd(d).map(ev=>{const top=(ev.startHour+(ev.startMin||0)/60)*RH;const h=((ev.endHour+(ev.endMin||0)/60)-(ev.startHour+(ev.startMin||0)/60))*RH;const done=isC(ev.id,ev.date);const lh=ev.linkedHabitId?hab.find(x=>x.id===ev.linkedHabitId):null;
-        return(<div key={ev.id} style={{position:"absolute",top:top+1,left:`calc(${LW}px + ${di} * ((100% - ${LW}px)/${wd.length}) + 2px)`,width:`calc((100% - ${LW}px)/${wd.length} - 4px)`,height:Math.max(h-2,22),background:done?`${ev.color||"#b8860b"}77`:(ev.color||"#b8860b"),borderRadius:6,padding:mob?"2px 5px":"4px 8px",cursor:"pointer",overflow:"hidden",borderLeft:`3px solid ${done?"#4ade80":(ev.accent||"#f5c842")}`,zIndex:10,opacity:done?.55:1}}>
+      {wd.map((d,di)=>efd(d).map(ev=>{const top=(ev.startHour+(ev.startMin||0)/60)*RH;const h=((ev.endHour+(ev.endMin||0)/60)-(ev.startHour+(ev.startMin||0)/60))*RH;const done=isC(ev.id,ev.date);const lh=ev.linkedHabitId?hab.find(x=>x.id===ev.linkedHabitId):null;const hasOL=overlaps.has(ev.id);
+        return(<div key={ev.id} style={{position:"absolute",top:top+1,left:`calc(${LW}px + ${di} * ((100% - ${LW}px)/${wd.length}) + 2px)`,width:`calc((100% - ${LW}px)/${wd.length} - 4px)`,height:Math.max(h-2,22),background:done?`${ev.color||"#b8860b"}77`:(ev.color||"#b8860b"),borderRadius:6,padding:mob?"2px 5px":"4px 8px",cursor:"pointer",overflow:"hidden",borderLeft:`3px solid ${hasOL?"#ef4444":done?"#4ade80":(ev.accent||"#f5c842")}`,zIndex:10,opacity:done?.55:1,animation:"slideUp .2s ease"}}>
           <button onClick={e=>{e.stopPropagation();togB(ev.id,ev.date)}} style={{position:"absolute",top:2,right:2,background:"none",border:"none",color:done?"#4ade80":"rgba(255,255,255,.4)",cursor:"pointer",padding:1,display:"flex",zIndex:11}}>{done?<I.CCF/>:<I.CC/>}</button>
-          <div onClick={e=>{e.stopPropagation();onEv(ev)}} style={{height:"100%"}}><div style={{fontSize:mob?9:12,fontWeight:600,color:ev.textColor||"#fff",textDecoration:done?"line-through":"none",opacity:done?.7:1,paddingRight:16,lineHeight:1.1}}>{ev.title}</div>
+          {hasOL&&<div style={{position:"absolute",top:2,right:mob?18:20,color:"#ef4444",display:"flex"}} title="Overlapping"><I.Warn/></div>}
+          <div onClick={e=>{e.stopPropagation();onEv(ev)}} style={{height:"100%"}}><div style={{fontSize:mob?9:12,fontWeight:600,color:ev.textColor||"#fff",textDecoration:done?"line-through":"none",opacity:done?.7:1,paddingRight:hasOL?28:16,lineHeight:1.1}}>{ev.title}</div>
             {h>26&&<div style={{fontSize:mob?7:10,color:"rgba(255,255,255,.6)",marginTop:1}}>{fmt(ev.startHour,ev.startMin)}–{fmt(ev.endHour,ev.endMin)}</div>}
             {lh&&h>38&&<div style={{fontSize:7,marginTop:1,display:"inline-flex",alignItems:"center",gap:2,background:"rgba(0,0,0,.3)",padding:"0 4px",borderRadius:8,color:lh.color}}><I.Lnk/>{lh.name}</div>}
           </div></div>)}))}
@@ -419,7 +465,7 @@ function MoView({cur,ev,today,onDay,comp,mob}){
 // ═══════════════════════════════════════════
 // EVENT MODAL
 // ═══════════════════════════════════════════
-function EvModal({pre,edit,hab,onClose,onSave,onDel,mob}){
+function EvModal({pre,edit,hab,onClose,onSave,onDel,onDup,mob}){
   const[title,setT]=useState(edit?.title||"");const[date,setD]=useState(edit?.date||pre?.date||dk(new Date()));
   const[sh,setSH]=useState(edit?.startHour??pre?.startHour??9);const[sm2,setSM]=useState(edit?.startMin??0);
   const[eh,setEH]=useState(edit?.endHour??pre?.endHour??10);const[em2,setEM]=useState(edit?.endMin??0);
@@ -452,6 +498,7 @@ function EvModal({pre,edit,hab,onClose,onSave,onDel,mob}){
       </div>}
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         {onDel&&<button onClick={onDel} style={{padding:"10px 14px",background:"#3a1a1a",border:"1px solid #5a2a2a",borderRadius:8,color:"#ef4444",cursor:"pointer",fontSize:13,marginRight:"auto"}}><I.Del/></button>}
+        {onDup&&<button onClick={onDup} style={{padding:"10px 14px",background:"#1a2a3a",border:"1px solid #2a4a5a",borderRadius:8,color:"#2196F3",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:4}}><I.Copy/>Tomorrow</button>}
         <button onClick={onClose} style={{padding:"10px 18px",background:"#252525",border:"none",borderRadius:8,color:"#aaa",cursor:"pointer",fontSize:13}}>Cancel</button>
         <button onClick={save} style={{padding:"10px 20px",background:"linear-gradient(135deg,#d4a017,#b8860b)",border:"none",borderRadius:8,color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>{edit?"Update":wks>1?`${wks} Blocks`:"Create"}</button>
       </div>
