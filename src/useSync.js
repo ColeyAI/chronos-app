@@ -53,6 +53,8 @@ export function useSyncedData(user) {
   const [habits, setHabits] = useState([]);
   const [habitLog, setHabitLog] = useState({});
   const [completedBlocks, setCompletedBlocks] = useState({});
+  const [tasks, setTasks] = useState([]);
+  const [profile, setProfile] = useState({});
   const [loaded, setLoaded] = useState(false);
   const saveTimer = useRef(null);
 
@@ -79,6 +81,8 @@ export function useSyncedData(user) {
       setHabits(map.habits || []);
       setHabitLog(map.habit_log || {});
       setCompletedBlocks(map.completed_blocks || {});
+      setTasks(map.tasks || []);
+      setProfile(map.profile || {});
       setLoaded(true);
     }
 
@@ -105,17 +109,23 @@ export function useSyncedData(user) {
   const debouncedHabits = useDebounce(habits, 800);
   const debouncedHabitLog = useDebounce(habitLog, 800);
   const debouncedCompleted = useDebounce(completedBlocks, 800);
+  const debouncedTasks = useDebounce(tasks, 800);
+  const debouncedProfile = useDebounce(profile, 800);
 
   useEffect(() => { if (loaded) saveToCloud('events', debouncedEvents); }, [debouncedEvents, loaded]);
   useEffect(() => { if (loaded) saveToCloud('habits', debouncedHabits); }, [debouncedHabits, loaded]);
   useEffect(() => { if (loaded) saveToCloud('habit_log', debouncedHabitLog); }, [debouncedHabitLog, loaded]);
   useEffect(() => { if (loaded) saveToCloud('completed_blocks', debouncedCompleted); }, [debouncedCompleted, loaded]);
+  useEffect(() => { if (loaded) saveToCloud('tasks', debouncedTasks); }, [debouncedTasks, loaded]);
+  useEffect(() => { if (loaded) saveToCloud('profile', debouncedProfile); }, [debouncedProfile, loaded]);
 
   return {
     events, setEvents,
     habits, setHabits,
     habitLog, setHabitLog,
     completedBlocks, setCompletedBlocks,
+    tasks, setTasks,
+    profile, setProfile,
     loaded,
   };
 }
