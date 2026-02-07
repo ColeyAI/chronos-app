@@ -132,7 +132,7 @@ function Main({user,signOut}){
       </div>}
 
       <div style={{flex:1,overflow:"auto",height:mob?"calc(100vh - 64px)":"100vh",WebkitOverflowScrolling:"touch"}}>
-        {page==="focus"&&<FocusPage tasks={tasks} setTasks={setTasks} profile={profile} setProfile={setProfile} mob={mob} signOut={mob?signOut:null}/>}
+        {page==="focus"&&<FocusPage tasks={tasks} setTasks={setTasks} profile={profile} setProfile={setProfile} mob={mob} signOut={mob?signOut:null} events={events} habits={habits} habitLog={habitLog} comp={comp} togH={togH} togB={togB} setPage={setPage}/>}
         {page==="calendar"&&<CalPage ev={events} hab={habits} addEv={addEv} addRec={addRec} delEv={delEv} updEv={updEv} dupEv={dupEv} togB={togB} isC={isC} comp={comp} mob={mob} clearWeek={clearWeek} clearPast={clearPast} overlaps={overlaps}/>}
         {page==="habits"&&<HabPage hab={habits} hLog={habitLog} addH={addH} delH={delH} togH={togH} ev={events} mob={mob}/>}
       </div>
@@ -155,12 +155,13 @@ function Main({user,signOut}){
 // ═══════════════════════════════════════════
 // FOCUS PAGE — Daily priorities, one at a time
 // ═══════════════════════════════════════════
-function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
+function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut,events,habits,habitLog,comp,togH,togB,setPage}){
   const[input,setInput]=useState("");
   const[editInt,setEditInt]=useState(false);
   const[intDraft,setIntDraft]=useState("");
   const[showReview,setShowReview]=useState(false);
   const[reviewDraft,setReviewDraft]=useState({wins:"",goal:""});
+  const[celebrate,setCelebrate]=useState(false);
   const today=dk(new Date());
   const isSunday=new Date().getDay()===0;
   
@@ -181,6 +182,11 @@ function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
     const updated={...reviews,[thisWeekKey]:{wins:reviewDraft.wins.trim(),goal:reviewDraft.goal.trim(),date:new Date().toISOString()}};
     setProfile(p=>({...p,reviews:updated}));setShowReview(false);
   };
+
+  // Today's blocks for timeline
+  const todayBlocks=useMemo(()=>events.filter(e=>e.date===today).sort((a,b)=>(a.startHour+(a.startMin||0)/60)-(b.startHour+(b.startMin||0)/60)),[events,today]);
+  const totalHrsBlocked=useMemo(()=>todayBlocks.reduce((s,e)=>s+((e.endHour+(e.endMin||0)/60)-(e.startHour+(e.startMin||0)/60)),0),[todayBlocks]);
+  const nowHour=(new Date().getHours()+new Date().getMinutes()/60);
 
   // Get today's tasks, carry forward incomplete from yesterday
   const todayTasks=useMemo(()=>{
@@ -205,6 +211,10 @@ function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
   const doneCount=doneTasks.length;
   const totalCount=todayTasks.length;
   const pct=totalCount>0?Math.round((doneCount/totalCount)*100):0;
+
+  // Celebration trigger
+  const prevPct=useRef(pct);
+  useEffect(()=>{if(pct===100&&prevPct.current<100&&totalCount>0){setCelebrate(true);setTimeout(()=>setCelebrate(false),2500)}prevPct.current=pct},[pct,totalCount]);
 
   const streak=useMemo(()=>{
     let s=0;const d=new Date();
@@ -294,6 +304,45 @@ function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
         </div>
       </div>
 
+      {/* Celebration overlay */}
+      {celebrate&&<div style={{position:"fixed",inset:0,zIndex:3000,pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",animation:"fadeIn .3s ease"}}>
+        <div style={{fontSize:mob?48:64,animation:"pop .5s ease"}}>🎉</div>
+        {Array.from({length:20}).map((_,i)=><div key={i} style={{position:"absolute",width:8,height:8,borderRadius:"50%",background:["#d4a017","#4ade80","#2196F3","#e91e63","#f59e0b"][i%5],top:`${20+Math.random()*60}%`,left:`${10+Math.random()*80}%`,animation:`pop ${.5+Math.random()*.5}s ease ${Math.random()*.3}s`,opacity:0.8}}/>)}
+      </div>}
+
+      {/* Today's Schedule — compact timeline */}
+      {todayBlocks.length>0&&<div style={{marginBottom:mob?12:16,padding:mob?"10px 12px":"14px 16px",background:"#161616",borderRadius:12,border:"1px solid #252525"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <span style={{fontSize:11,color:"#888",textTransform:"uppercase",letterSpacing:1}}>Today's Schedule</span>
+          <button onClick={()=>setPage("calendar")} style={{fontSize:10,color:"#d4a017",background:"none",border:"none",cursor:"pointer"}}>Open calendar →</button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {todayBlocks.map(ev=>{const s=ev.startHour+(ev.startMin||0)/60,e=ev.endHour+(ev.endMin||0)/60;const past=nowHour>e;const active=nowHour>=s&&nowHour<e;const done=!!comp[`${ev.id}_${ev.date}`];
+            return(<div key={ev.id} style={{display:"flex",alignItems:"center",gap:mob?8:10,padding:mob?"6px 0":"6px 0",opacity:past&&!active?.5:1}}>
+              <div style={{width:mob?52:60,fontSize:mob?10:11,color:active?"#d4a017":"#666",fontWeight:active?600:400,flexShrink:0,textAlign:"right"}}>{fmt(ev.startHour,ev.startMin)}</div>
+              <div style={{width:3,height:mob?20:24,borderRadius:2,background:active?"#d4a017":done?"#4ade80":(ev.color||"#b8860b"),flexShrink:0}}/>
+              <div style={{flex:1,fontSize:mob?12:13,color:done?"#666":(active?"#e8e4de":"#aaa"),fontWeight:active?600:400,textDecoration:done?"line-through":"none",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{ev.title}</div>
+              <button onClick={()=>togB(ev.id,ev.date)} style={{background:"none",border:"none",color:done?"#4ade80":"#444",cursor:"pointer",padding:2,flexShrink:0}}>{done?<I.CCF/>:<I.CC/>}</button>
+            </div>)})}
+        </div>
+        <div style={{marginTop:6,fontSize:mob?10:11,color:"#555"}}>{totalHrsBlocked.toFixed(1)}h blocked · {Math.max(0,(16-totalHrsBlocked)).toFixed(1)}h free</div>
+      </div>}
+
+      {/* Habit Quick-Check */}
+      {habits.length>0&&<div style={{marginBottom:mob?12:16,padding:mob?"10px 12px":"14px 16px",background:"#161616",borderRadius:12,border:"1px solid #252525"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <span style={{fontSize:11,color:"#888",textTransform:"uppercase",letterSpacing:1}}>Habits</span>
+          <button onClick={()=>setPage("habits")} style={{fontSize:10,color:"#d4a017",background:"none",border:"none",cursor:"pointer"}}>See all →</button>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:mob?6:8}}>
+          {habits.map(h=>{const done=!!habitLog[`${h.id}_${today}`];return(
+            <button key={h.id} onClick={()=>togH(h.id,today)} style={{display:"flex",alignItems:"center",gap:6,padding:mob?"6px 10px":"6px 12px",background:done?h.color+"22":"#1e1e1e",border:`1px solid ${done?h.color+"66":"#333"}`,borderRadius:20,cursor:"pointer",transition:"all .15s",animation:done?"pop .3s ease":"none"}}>
+              <div style={{width:mob?14:16,height:mob?14:16,borderRadius:"50%",border:done?"none":`2px solid ${h.color}44`,background:done?h.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>{done&&<I.ChkS/>}</div>
+              <span style={{fontSize:mob?11:12,color:done?h.color:"#888",fontWeight:done?600:400}}>{h.name}</span>
+            </button>)})}
+        </div>
+      </div>}
+
       {/* Current Focus Highlight */}
       {currentFocus&&<div style={{background:"linear-gradient(135deg,#1a1a0f,#161616)",border:"1px solid #d4a01744",borderRadius:16,padding:mob?"16px":"24px",marginBottom:mob?16:24}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
@@ -306,10 +355,10 @@ function FocusPage({tasks,setTasks,profile,setProfile,mob,signOut}){
       </div>}
 
       {/* All done */}
-      {totalCount>0&&activeTasks.length===0&&<div style={{background:"#1a2a1a",border:"1px solid #2a5a2a",borderRadius:16,padding:mob?"20px":"32px",marginBottom:mob?16:24,textAlign:"center"}}>
-        <div style={{fontSize:mob?28:36,marginBottom:8}}>✓</div>
+      {totalCount>0&&activeTasks.length===0&&<div style={{background:"linear-gradient(135deg,#1a2a1a,#161616)",border:"1px solid #2a5a2a",borderRadius:16,padding:mob?"20px":"32px",marginBottom:mob?16:24,textAlign:"center",animation:"fadeIn .4s ease"}}>
+        <div style={{fontSize:mob?36:48,marginBottom:8,animation:"pop .5s ease"}}>✓</div>
         <div style={{fontSize:mob?18:22,fontWeight:700,color:"#4ade80",fontFamily:"'Playfair Display',serif",marginBottom:4}}>All tasks complete</div>
-        <div style={{fontSize:13,color:"#666"}}>You crushed it today. Rest or push further.</div>
+        <div style={{fontSize:13,color:"#666"}}>{streak>1?`${streak} day streak — keep it going.`:"You crushed it today."}</div>
       </div>}
 
       {/* Add task */}
